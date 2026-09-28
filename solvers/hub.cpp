@@ -14,6 +14,7 @@ const double W_END_SPOT = 3.0;    // 日の終わりにスポット上にいる�
 const double W_FUEL     = 0.05;   // 残り燃料 1 あたりの価値
 const double W_TIME     = 0.01;   // 到着時刻の合計（早く着くほど良い）
 const double W_BAD      = 1.0;    // 実行できないノード 1 つあたりのペナルティ
+const double W_STRAND   = 300.0;  // 日の終わりに拠点へ戻れる燃料がない巡回車 1 台あたりのペナルティ
 
 struct HubPlanner {
     const vector<Agent>& st;
@@ -24,7 +25,8 @@ struct HubPlanner {
     vector<int> patrols, supplies;   // エージェント番号
     int P, K;                        // 巡回車数, 補給車(=拠点)数
     vector<int> hub, ready;          // [K] 拠点のセル, 補給車が拠点に着く時刻
-    vector<int> hubCand;             // 拠点にできるセル（道路に置くと渋滞するので平地・山地のみ）
+    vector<int> hubCand;             // 拠点にできるセル（道路に置くと渋滞するので平地・山地のみ。救助のときは例外）
+    vector<int> rescue;              // 救助が必要な巡回車のいるセル
     // ノード: 0..S-1 スポット, S..S+K-1 拠点 / 出発点: S+K+u
     vector<const PathTable*> tf, tc; // 各出発点からの 最速 / 燃料最小 の表
     vector<const PathTable*> supTbl; // [K] 補給車の現在地からの最速の表
@@ -42,6 +44,13 @@ struct HubPlanner {
         supTbl.resize(K);
         for (int j = 0; j < K; j++) supTbl[j] = &router.get(st[supplies[j]].pos, 0);
         for (int p = 0; p < NC; p++) if (passable(p) && cellType[p] != ROAD) hubCand.push_back(p);
+        // 補給車の今の位置まで行けない（= 自力では補給を受けられない）巡回車は救助の対象
+        for (int u = 0; u < P; u++) {
+            int c = st[patrols[u]].pos;
+            for (int j = 0; j < K; j++)
+                if (tc[S + K + u]->f[st[supplies[j]].pos] > st[patrols[u]].fuel) { rescue.push_back(c); break; }
+        }
+        for (int c : rescue) if (cellType[c] == ROAD) hubCand.push_back(c);
         hub.assign(K, -1); ready.assign(K, INT_MAX);
         initHubs();
     }
@@ -60,7 +69,19 @@ struct HubPlanner {
         for (int s = 0; s < S; s++) cand.push_back(spots[s].pos);
         for (int j = 0; j < K; j++) if (cellType[st[supplies[j]].pos] != ROAD) cand.push_back(st[supplies[j]].pos);
         vector<int> nearest(S, INT_MAX);  // 決定済みの拠点からの最短
+        vector<char> fixedHub(K, 0);
+        for (int c : rescue) {
+            int bj = -1;
+            for (int j = 0; j < K; j++)
+                if (!fixedHub[j] && supTbl[j]->t[c] != INT_MAX && (bj < 0 || supTbl[j]->t[c] < supTbl[bj]->t[c])) bj = j;
+            if (bj < 0) break;
+            fixedHub[bj] = 1;
+            setHub(bj, c);
+            const PathTable& pt = router.get(c, 0);
+            for (int s = 0; s < S; s++) nearest[s] = min(nearest[s], pt.t[spots[s].pos]);
+        }
         for (int j = 0; j < K; j++) {
+            if (fixedHub[j]) continue;
             double bestCost = 1e18; int bestC = st[supplies[j]].pos;
             for (int c : cand) {
                 int travel = supTbl[j]->t[c];
@@ -102,7 +123,7 @@ struct HubPlanner {
     double eval(const vector<vector<int>>& routes) {
         visits.assign(S, 0); hit.assign(B, 0);
         if ((int)seen.size() != S) seen.assign(S, 0);
-        double sumT = 0; int bad = 0, endSpot = 0; long long fuelLeft = 0;
+        double sumT = 0; int bad = 0, endSpot = 0, strand = 0; long long fuelLeft = 0;
         auto mark = [&](int c) {
             int s = spotAt[c];
             if (s >= 0 && seen[s] != stamp) { seen[s] = stamp; visits[s]++; hit[spots[s].brand] = 1; }
@@ -120,11 +141,17 @@ struct HubPlanner {
             }
             if (onSpot) endSpot++;
             fuelLeft += f;
+            // 最終日以外: どこかの拠点まで燃料最小の経路で戻れないなら減点（翌日以降に補給できなくなる）
+            if (!lastDay && K > 0) {
+                int need = INT_MAX;
+                for (int j = 0; j < K; j++) need = min(need, tc[src]->f[hub[j]]);
+                if (f < need) strand++;
+            }
         }
         int balls = 0, dayB = 0, newB = 0;
         for (int s = 0; s < S; s++) balls += min(visits[s], spots[s].stock);
         for (int b = 0; b < B; b++) if (hit[b]) { dayB++; if (!collectedBefore[b]) newB++; }
-        double sc = W_NEW * newB + W_DAY * dayB + W_BALL * balls - W_TIME * sumT - W_BAD * bad;
+        double sc = W_NEW * newB + W_DAY * dayB + W_BALL * balls - W_TIME * sumT - W_BAD * bad - W_STRAND * strand;
         if (!lastDay) sc += W_END_SPOT * endSpot + W_FUEL * fuelLeft;
         return sc;
     }

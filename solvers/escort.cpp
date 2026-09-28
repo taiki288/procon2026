@@ -50,10 +50,23 @@ struct DayPlanner {
         vector<int> patrols, supplies;
         for (int i = 0; i < NA; i++) (st[i].kind == 0 ? patrols : supplies).push_back(i);
         vector<int> pairOf(NA, -1);
+        // 燃料が少ない巡回車（残り 1/3 未満）を優先: 一番近くの補給車が迎えに行く（今日中に合流できる場合）
+        vector<int> low;
+        for (int p : patrols) if (st[p].fuel * 3 < FUEL_LIMIT) low.push_back(p);
+        sort(low.begin(), low.end(), [&](int a, int b) { return st[a].fuel < st[b].fuel; });
+        for (int p : low) {
+            int best = -1, bt = INT_MAX;
+            for (int j : supplies) {
+                if (pairOf[j] >= 0) continue;
+                int t = router.get(st[j].pos, 0).t[st[p].pos];
+                if (t < steps && t < bt) { bt = t; best = j; }
+            }
+            if (best >= 0) { pairOf[p] = best; pairOf[best] = p; }
+        }
         // 同じセルにいる巡回車と組む → 残りは一番近い巡回車と組む
         for (int j : supplies)
             for (int p : patrols)
-                if (pairOf[p] < 0 && st[p].pos == st[j].pos) { pairOf[p] = j; pairOf[j] = p; break; }
+                if (pairOf[j] < 0 && pairOf[p] < 0 && st[p].pos == st[j].pos) { pairOf[p] = j; pairOf[j] = p; break; }
         for (int j : supplies) {
             if (pairOf[j] >= 0) continue;
             const PathTable& pt = router.get(st[j].pos, 0);
