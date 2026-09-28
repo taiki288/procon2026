@@ -3,9 +3,15 @@
 // 複数の solver を同じ試合に出して、seed ごとの結果 JSON（visualizer でそのまま開ける）を書き出す。
 //
 //   node tools/judge.js solvers/escort.cpp solvers/hub.cpp --seeds 0-99
+//   node tools/judge.js --teams hub:1,hub@v1:1,greedy:8 --seeds 0-29
 //   node tools/judge.js solvers/hub.cpp --maps maps/sample_16.json,maps/sample_32.json --copies 3
 //
+// solver の書き方
+//   solvers/hub.cpp / hub（= solvers/hub.cpp）/ build/x.exe
+//   hub@v1             git のタグ（やコミット）v1 時点の solvers/ からビルドした版
+//
 // オプション
+//   --teams a:N,b:M    チーム構成（solver ごとのチーム数。:N を省くと 1）
 //   --seeds 0-99       maps/gen/NNNN.json を使う（なければ tools/gen.py で生成）
 //   --maps a.json,...  マップを直接指定（--seeds の代わり）
 //   --copies N         各 solver を N チームずつ出場させる（既定 1）
@@ -29,6 +35,7 @@ function parseArgs() {
   for (let i = 0; i < a.length; i++) {
     const k = a[i], v = () => a[++i];
     if (k === "--seeds") opt.seeds = v();
+    else if (k === "--teams") opt.teams = v();
     else if (k === "--maps") opt.maps = v().split(",").filter(Boolean);
     else if (k === "--copies") opt.copies = +v();
     else if (k === "--time-ms") opt.timeMs = +v();
@@ -38,7 +45,7 @@ function parseArgs() {
     else if (k.startsWith("--")) { console.error("不明なオプション " + k); process.exit(1); }
     else opt.solvers.push(k);
   }
-  if (!opt.solvers.length) { console.error("usage: node tools/judge.js <solver.cpp|.exe> ... --seeds 0-99"); process.exit(1); }
+  if (!opt.solvers.length && !opt.teams) { console.error("usage: node tools/judge.js <solver> ... | --teams a:N,b:M  [--seeds 0-99]"); process.exit(1); }
   if (!opt.seeds && !opt.maps) opt.seeds = "0-9";
   return opt;
 }
@@ -52,9 +59,9 @@ function parseSeeds(s) {
 }
 
 // ---------------- ビルド ----------------
-function build(src) {
+function build(src, exeName) {
   if (src.endsWith(".exe")) return path.resolve(src);
-  const name = path.basename(src, ".cpp");
+  const name = exeName || path.basename(src, ".cpp");
   const exe = path.join(ROOT, "build", name + ".exe");
   fs.mkdirSync(path.dirname(exe), { recursive: true });
   const dir = path.dirname(path.resolve(src));
@@ -65,6 +72,30 @@ function build(src) {
     execFileSync("g++", ["-std=c++17", "-O2", "-o", exe, src], { stdio: "inherit" });
   }
   return exe;
+}
+
+// "hub" / "solvers/hub.cpp" / "x.exe" / "hub@v1" → { label, exe }
+function resolveSolver(spec) {
+  const m = spec.match(/^(.+?)@([^@]+)$/);
+  const base = m ? m[1] : spec, rev = m ? m[2] : null;
+  if (base.endsWith(".exe")) {
+    if (rev) throw new Error(".exe にはタグを指定できません: " + spec);
+    return { label: path.basename(base, ".exe"), exe: path.resolve(base) };
+  }
+  const src = base.endsWith(".cpp") ? base : path.join("solvers", base + ".cpp");
+  const name = path.basename(src, ".cpp");
+  if (!rev) return { label: name, exe: build(src) };
+  // git の版: 同じフォルダのファイルをその版の内容で build/src/<版>/ に書き出してビルド
+  const rel = path.relative(ROOT, path.resolve(src)).split(path.sep).join("/"), dir = path.posix.dirname(rel);
+  const git = (...args) => execFileSync("git", args, { cwd: ROOT, encoding: "utf8" });
+  const outDir = path.join(ROOT, "build", "src", rev.replace(/[^\w.-]/g, "_"));
+  const exeName = `${name}@${rev.replace(/[^\w.-]/g, "_")}`;
+  if (!fs.existsSync(path.join(ROOT, "build", exeName + ".exe"))) {
+    fs.mkdirSync(path.join(outDir, dir), { recursive: true });
+    for (const f of git("ls-tree", "--name-only", rev, dir + "/").split("\n").filter(Boolean))
+      fs.writeFileSync(path.join(outDir, f), execFileSync("git", ["show", `${rev}:${f}`], { cwd: ROOT }));
+  }
+  return { label: `${name}@${rev}`, exe: build(path.join(outDir, rel), exeName) };
 }
 
 // ---------------- マップ ----------------
@@ -182,10 +213,21 @@ function defaultOutDir(nTeams) {
 // ---------------- main ----------------
 const OPT = parseArgs();
 (async () => {
-  const exes = OPT.solvers.map(build);
-  const base = exes.map((e) => path.basename(e, ".exe"));
+  // チーム構成: 並べた solver（各 --copies チーム）+ --teams a:N,b:M
+  const entries = OPT.solvers.map((s) => [s, OPT.copies]);
+  if (OPT.teams) for (const e of OPT.teams.split(",").filter(Boolean)) {
+    const m = e.match(/^(.*?)(?::(\d+))?$/);
+    entries.push([m[1], m[2] ? +m[2] : 1]);
+  }
   const teams = [];
-  base.forEach((b, i) => { for (let c = 0; c < OPT.copies; c++) teams.push({ name: OPT.copies > 1 ? `${b}#${c}` : b, solver: b, exe: exes[i] }); });
+  for (const [spec, n] of entries) {
+    const { label, exe } = resolveSolver(spec);
+    const total = entries.filter(([s]) => s === spec).reduce((x, [, c]) => x + c, 0);
+    for (let c = 0; c < n; c++) {
+      const k = teams.filter((t) => t.solver === label).length;
+      teams.push({ name: total > 1 ? `${label}#${k}` : label, solver: label, exe });
+    }
+  }
   const maps = mapList(OPT);
   const out = path.resolve(OPT.out || defaultOutDir(teams.length));
   fs.mkdirSync(path.join(out, "stderr"), { recursive: true });
@@ -199,7 +241,10 @@ const OPT = parseArgs();
     fs.writeFileSync(path.join(out, m.name + ".json"), JSON.stringify(log));
     stderr.forEach((s, i) => fs.writeFileSync(path.join(out, "stderr", `${m.name}-${teams[i].name}.txt`), s));
     const R = Sim.run(log);
-    summary.push({ seed: m.name, teams: R.teams.map((t, i) => ({ name: t.name, solver: teams[i].solver, rank: t.rank,
+    // 渋滞: 日ごとの 混雑 / 渋滞 した道路セル数
+    const roads = R.geo.cells.filter((c) => c === Sim.ROAD).length;
+    const traffic = R.statuses.map((st) => ({ busy: st.filter((x) => x === 1).length, jammed: st.filter((x) => x === 2).length }));
+    summary.push({ seed: m.name, roads, traffic, teams: R.teams.map((t, i) => ({ name: t.name, solver: teams[i].solver, rank: t.rank,
       matchBrands: t.matchBrands, dayBrands: t.dayBrands, balls: t.balls, invalid: t.invalid })) });
     finished++;
     process.stdout.write(`\r  ${finished}/${maps.length} 試合完了 (${((Date.now() - t0) / 1000).toFixed(0)}s)`);
@@ -215,9 +260,15 @@ const OPT = parseArgs();
     A.games++; A.wins += t.rank === 1; A.rank += t.rank;
     A.matchBrands += t.matchBrands; A.dayBrands += t.dayBrands; A.balls += t.balls; A.invalid += t.invalid;
   }
-  console.log("solver        出場  1位  平均順位  総種類計  日別計   玉計  無効日");
+  const w = Math.max(12, ...Object.keys(agg).map((n) => n.length));
+  console.log(`${"solver".padEnd(w)}  出場  1位  平均順位  総種類計  日別計   玉計  1試合平均(日別/玉)  無効日`);
   for (const [n, A] of Object.entries(agg))
-    console.log(`${n.padEnd(12)} ${String(A.games).padStart(5)} ${String(A.wins).padStart(4)} ${(A.rank / A.games).toFixed(2).padStart(9)}` +
-      ` ${String(A.matchBrands).padStart(9)} ${String(A.dayBrands).padStart(7)} ${String(A.balls).padStart(6)} ${String(A.invalid).padStart(7)}`);
+    console.log(`${n.padEnd(w)} ${String(A.games).padStart(5)} ${String(A.wins).padStart(4)} ${(A.rank / A.games).toFixed(2).padStart(9)}` +
+      ` ${String(A.matchBrands).padStart(9)} ${String(A.dayBrands).padStart(7)} ${String(A.balls).padStart(6)}` +
+      ` ${(A.dayBrands / A.games).toFixed(1).padStart(12)} / ${(A.balls / A.games).toFixed(1).padEnd(6)} ${String(A.invalid).padStart(5)}`);
+  // 渋滞の割合（全試合・全日の平均。1 日目は必ず全部順調なので除く）
+  let busy = 0, jam = 0, cnt = 0;
+  for (const s of summary) s.traffic.slice(1).forEach((t) => { busy += t.busy / s.roads; jam += t.jammed / s.roads; cnt++; });
+  if (cnt) console.log(`\n道路の状態（2 日目以降の平均）: 混雑 ${(100 * busy / cnt).toFixed(1)}%  渋滞 ${(100 * jam / cnt).toFixed(1)}%`);
   console.log(`\nvisualizer で「フォルダを開く」→ ${out}`);
 })();

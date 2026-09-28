@@ -65,6 +65,7 @@
   <label><input type="checkbox" id="others" checked> 他チームも表示</label>
   <label><input type="checkbox" id="trail" checked> 軌跡</label>
   <label><input type="checkbox" id="ids"> セル番号</label>
+  <label title="その日に全チームのエージェントが各道路セルにいたステップ数（濃いほど多い）"><input type="checkbox" id="heat"> 交通量</label>
 </header>
 
 <main>
@@ -328,6 +329,19 @@ function draw() {
       ctx.fillText(p, cx, cy + r * 0.5);
     }
   }
+  // 交通量: その日の全チーム合計の滞在ステップ数（その日の最大値で正規化）
+  if ($("heat").checked && R.stays[day]) {
+    const stay = R.stays[day], mx = Math.max(1, ...stay);
+    for (let p = 0; p < geo.NC; p++) {
+      if (geo.cells[p] !== 1 || !stay[p]) continue;
+      const [cx, cy] = center(p);
+      hexPath(ctx, cx, cy, r * 0.98);
+      ctx.fillStyle = `rgba(109, 40, 217, ${0.15 + 0.7 * stay[p] / mx})`;
+      ctx.fill();
+      ctx.fillStyle = "#fff"; ctx.font = `bold ${Math.max(7, r * 0.45)}px sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(stay[p], cx, cy);
+    }
+  }
   // スポット
   const fr = frameOf(team);
   const today = new Set(fr && curDay() ? curDay().events.filter((e) => e.t <= step).map((e) => e.spot) : []);
@@ -409,10 +423,12 @@ function renderRanking() {
 function renderSide() {
   const t = R.teams[team], fr = frameOf(team);
   // 日別
-  $("days").innerHTML = `<tr><th>日</th><th>ステップ</th><th>種類</th><th>玉</th><th title="client: 受付開始から最後の有効な提出まで / judge: solver の実行時間">時間(秒)</th><th class="l">状態</th></tr>` +
+  const roadN = R.geo.cells.filter((c) => c === 1).length;
+  $("days").innerHTML = `<tr><th>日</th><th>ステップ</th><th title="道路 ${roadN} セルのうち 混雑 / 渋滞 の数（全チーム共通）">混雑/渋滞</th><th>種類</th><th>玉</th><th title="client: 受付開始から最後の有効な提出まで / judge: solver の実行時間">時間(秒)</th><th class="l">状態</th></tr>` +
     R.pb.daySteps.map((s, k) => {
-      const d = t && t.days[k];
-      return `<tr class="${k === day ? "sel" : ""}"><td>${k}</td><td>${s}</td><td>${d ? d.brands.length : "-"}</td><td>${d ? d.balls : "-"}</td>
+      const d = t && t.days[k], st = R.statuses[k];
+      const busy = st.filter((x) => x === 1).length, jam = st.filter((x) => x === 2).length;
+      return `<tr class="${k === day ? "sel" : ""}"><td>${k}</td><td>${s}</td><td>${busy} / <span class="${jam ? "err" : ""}">${jam}</span></td><td>${d ? d.brands.length : "-"}</td><td>${d ? d.balls : "-"}</td>
         <td>${t && t.times && t.times[k] != null ? t.times[k].toFixed(1) : "-"}</td><td class="l ${d && d.error ? "err" : ""}">${d ? (d.error ? "無効" : "OK") : ""}</td></tr>`;
     }).join("");
   // エージェント
@@ -470,7 +486,7 @@ $("last").onclick = () => { if (R) { step = R.pb.daySteps[day]; update(); } };
 $("day").oninput = (e) => { day = +e.target.value; step = 0; update(); };
 $("step").oninput = (e) => { step = +e.target.value; update(); };
 $("team").onchange = (e) => { team = +e.target.value; selName = R.teams[team] && R.teams[team].name; renderRanking(); update(); };
-["others", "trail", "ids"].forEach((id) => $(id).onchange = draw);
+["others", "trail", "ids", "heat"].forEach((id) => $(id).onchange = draw);
 window.addEventListener("keydown", (e) => {
   if (e.target.tagName === "INPUT" && e.target.type !== "checkbox") return;
   if (e.key === "ArrowRight") go(1);

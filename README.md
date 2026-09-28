@@ -41,12 +41,15 @@ solvers/
 
 ```bash
 node tools/judge.js solvers/escort.cpp solvers/hub.cpp --seeds 0-99
+node tools/judge.js --teams hub:1,hub@v1:1,greedy:8 --seeds 0-29     # 10 チーム戦・過去の版と比較
 ```
 
 - サーバーを使わず `visualizer/sim.js`（簡易サーバーと一致を確認済み）で試合を回す。seed 100 個で数分
 - `maps/gen/NNNN.json` がなければ `tools/gen.py` で自動生成（サイズは seed % 3 で 16 / 24 / 32）
 - `.cpp` は `build/` に自動でビルド（`common.hpp` を変えたら再ビルド）
 - 出力: `logs/月日-時分-チーム数teams/NNNN.json`（例: `logs/0928-1715-3teams/`）（seed ごと）、`summary.json`、`stderr/`（solver のログ）
+- `--teams a:N,b:M` でチーム構成を指定。`hub@v1` のように書くと git のタグ（コミット）時点の solvers/ からビルドした版が出る
+- 結果には日ごとの混雑・渋滞した道路セル数も残る（`summary.json` の `traffic`）
 - 主なオプション: `--time-ms 1000`（1 日の持ち時間）、`--copies 2`（各 solver 2 チーム）、
   `--maps maps/sample_16.json,...`（マップ直接指定）、`--parallel 8`
 - 新しい solver は `common.hpp` を include して `planDay` と `kindCandidates` を書き、`main` で `solverMain()` を呼ぶだけ
@@ -94,6 +97,7 @@ python tools/client.py --url http://<サーバー> --token <トークン> --solv
 - 試合の全チームがそろえば渋滞を自前で計算、足りなければサーバーが配った道路状態を使います
 - 日・ステップのスライダー、再生、← → キー、スペースで再生/停止
 - 右側: 順位表（クリックでチーム切替）、日別成績、エージェントの燃料、系列の取得状況
+- 「交通量」をオンにすると、その日に全チームが各道路セルにいたステップ数を表示（日別の表には混雑/渋滞のセル数）
 - セルにマウスを乗せると地形・道路状態・交通量・スポット・いるエージェントを表示
 - ログにサーバーの状態が入っていれば、シミュレーション結果との食い違いを赤字で表示
 
