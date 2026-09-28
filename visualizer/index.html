@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>ヘキサうどん Visualizer</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #fff; --line: #dde1e6; --text: #1f2328; --sub: #667085; --accent: #2563eb;
+    --plain: #e6f2d6; --road: #cfd3d8; --busy: #f5b54a; --jam: #e5534b; --mountain: #b9a88d; --pond: #8ec5ec;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", sans-serif; font-size: 13px; color: var(--text); background: var(--bg); }
+  header { display: flex; gap: 12px; align-items: center; padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; }
+  #drop { border: 1.5px dashed var(--line); border-radius: 6px; padding: 5px 10px; color: var(--sub); }
+  #drop.over { border-color: var(--accent); color: var(--accent); }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 390px; gap: 12px; padding: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  .card h2 { font-size: 13px; margin: 0 0 8px; color: var(--sub); font-weight: 600; }
+  #side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .controls { display: grid; grid-template-columns: auto 1fr auto; gap: 6px 10px; align-items: center; margin-bottom: 8px; }
+  .controls input[type=range] { width: 100%; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  button { border: 1px solid var(--line); background: #fff; border-radius: 5px; padding: 3px 9px; cursor: pointer; font-size: 13px; }
+  button:hover { border-color: var(--accent); }
+  select { font-size: 13px; padding: 2px 4px; }
+  #board { width: 100%; display: block; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { padding: 3px 6px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th:first-child, td:first-child, .l { text-align: left; }
+  th { color: var(--sub); font-weight: 600; font-size: 12px; }
+  tr.sel td { background: #eef3ff; font-weight: 600; }
+  #ranking tr, #matchList tr[data-i] { cursor: pointer; }
+  td.win { color: #16a34a; font-weight: 600; }
+  header + header { padding-top: 4px; }
+  .err { color: var(--jam); }
+  .muted { color: var(--sub); }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .chip { border-radius: 10px; padding: 1px 7px; font-size: 12px; border: 2px solid transparent; color: #fff; opacity: .35; }
+  .chip.ever { opacity: .7; }
+  .chip.today { opacity: 1; border-color: #1f2328; }
+  .legend { display: flex; gap: 10px; flex-wrap: wrap; color: var(--sub); font-size: 12px; margin-top: 6px; }
+  .sw { display: inline-block; width: 11px; height: 11px; border-radius: 2px; vertical-align: -1px; margin-right: 3px; border: 1px solid #0002; }
+  #tip { position: fixed; pointer-events: none; background: #1f2328e8; color: #fff; padding: 5px 8px; border-radius: 5px; font-size: 12px; display: none; white-space: pre; z-index: 10; }
+  .bar { display: inline-block; height: 7px; background: #4caf50; border-radius: 2px; vertical-align: 1px; }
+  .barbg { display: inline-block; width: 60px; height: 7px; background: #e5e7eb; border-radius: 2px; }
+  #empty { padding: 60px; text-align: center; color: var(--sub); }
+</style>
+</head>
+<body>
+<header>
+  <h1>ヘキサうどん Visualizer</h1>
+  <button id="dirBtn" title="judge の出力フォルダなどをまとめて読み込む">📁 フォルダを開く</button>
+  <input type="file" id="dir" webkitdirectory hidden>
+  <input type="file" id="file" accept=".json" multiple>
+  <button id="addBtn" title="今読み込んでいるものにファイルを追加">＋ 追加</button>
+  <input type="file" id="addFile" accept=".json" multiple hidden>
+  <span id="drop">JSON をドロップ（複数可 / Shift+ドロップで追加）</span>
+  <span id="loaded" class="muted"></span>
+</header>
+<header>
+  <span class="row">試合(seed) <button id="mPrev">◀</button><select id="match" style="min-width:200px"></select><button id="mNext">▶</button>
+    <span class="muted">（[ ] キー）</span></span>
+  <span class="row">チーム <select id="team"></select></span>
+  <label><input type="checkbox" id="others" checked> 他チームも表示</label>
+  <label><input type="checkbox" id="trail" checked> 軌跡</label>
+  <label><input type="checkbox" id="ids"> セル番号</label>
+</header>
+
+<main>
+  <section class="card">
+    <div class="controls">
+      <span>日</span><input type="range" id="day" min="0" value="0"><span id="dayLbl" class="muted"></span>
+      <span>ステップ</span><input type="range" id="step" min="0" value="0"><span id="stepLbl" class="muted"></span>
+    </div>
+    <div class="row" style="margin-bottom:8px">
+      <button id="first">⏮</button><button id="prev">◀</button><button id="play">▶ 再生</button><button id="next">▶</button><button id="last">⏭</button>
+      <span class="muted">速さ</span>
+      <select id="speed"><option value="1">×1</option><option value="3" selected>×3</option><option value="10">×10</option><option value="30">×30</option></select>
+      <label><input type="checkbox" id="cont" checked> 日をまたいで再生</label>
+      <span class="muted">（← → キーでも操作）</span>
+    </div>
+    <div id="empty">JSON を読み込んでください</div>
+    <canvas id="board"></canvas>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--plain)"></i>平地</span>
+      <span><i class="sw" style="background:var(--mountain)"></i>山地</span>
+      <span><i class="sw" style="background:var(--pond)"></i>池</span>
+      <span><i class="sw" style="background:var(--road)"></i>道路(順調)</span>
+      <span><i class="sw" style="background:var(--busy)"></i>混雑</span>
+      <span><i class="sw" style="background:var(--jam)"></i>渋滞</span>
+      <span>● 巡回車（上のバー=燃料）　◆ 補給車　■ スポット（数字=系列 / 右下=残り在庫 / 薄い=今日取得済み）</span>
+    </div>
+    <div id="dayErr" class="err" style="margin-top:6px"></div>
+  </section>
+
+  <aside id="side">
+    <div class="card" id="summaryCard" style="display:none">
+      <h2>全試合の集計（solver ごと）</h2>
+      <table id="summary"></table>
+      <details style="margin-top:8px">
+        <summary class="muted" style="cursor:pointer">試合一覧（クリックで移動 / 数字は 順位・日別種類計）</summary>
+        <div style="max-height:260px; overflow:auto; margin-top:4px"><table id="matchList"></table></div>
+      </details>
+    </div>
+    <div class="card">
+      <h2>順位（クリックでチーム切替）</h2>
+      <table id="ranking"></table>
+      <div id="checks" class="err" style="margin-top:6px"></div>
+    </div>
+    <div class="card">
+      <h2>日別（選択中のチーム）</h2>
+      <table id="days"></table>
+    </div>
+    <div class="card">
+      <h2>エージェント（このステップ）</h2>
+      <table id="agents"></table>
+    </div>
+    <div class="card">
+      <h2>系列（黒枠=今日取得 / 濃い=取得済み）</h2>
+      <div id="brands" class="chips"></div>
+    </div>
+  </aside>
+</main>
+<div id="tip"></div>
+
+<script src="sim.js"></script>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const TEAM_COLORS = ["#2563eb", "#dc2626", "#16a34a", "#9333ea", "#ea580c", "#0891b2", "#db2777", "#65a30d", "#4f46e5", "#b45309", "#0f766e", "#7c3aed"];
+// 系列の色: 色相を黄金角で回して隣り合う番号が似ないようにする
+const brandColor = (k) => `hsl(${Math.round(k * 137.508) % 360}, 60%, ${k % 2 ? 40 : 50}%)`;
+
+let R = null, brandList = [], team = 0, day = 0, step = 0, timer = null;
+let layout = null;
+
+// ---------------- 読み込み ----------------
+function toLog(obj) {
+  if (obj.map && obj.spots) {   // MatchSetting（参考マップ）
+    return { problem: { width: obj.map.width, height: obj.map.height, cells: obj.map.cells, spots: obj.spots, agentStarts: obj.agents,
+      fuelLimits: obj.fuelLimits, daySteps: obj.daySteps, daySeconds: obj.daySeconds, busyThreshold: obj.busyThreshold, jammedThreshold: obj.jammedThreshold },
+      players: obj.players, teams: [] };
+  }
+  if (!obj.problem) throw new Error("problem がありません");
+  const teams = (obj.teams || []).filter((t) => t.actions || t.kinds).map((t) => ({ ...t }));
+  // client のログはサーバーの道路状態を最上位に持つ → チーム側へ移す（照合用）
+  if (obj.traffics) teams.forEach((t) => (t.serverTraffics = t.serverTraffics || obj.traffics));
+  return { ...obj, teams };
+}
+
+// 読み込んだファイルを「試合（seed）」ごとにまとめる
+//   同じマップのファイル → 1 試合（チームのログを合体）/ 違うマップ → 別の試合
+let loadedFiles = [];  // [{ name, log }]
+let matches = [];      // [{ name, log, R }]
+let cur = 0, selName = null;
+const probKey = (p) => JSON.stringify([p.width, p.height, p.cells, p.spots, p.agentStarts, p.daySteps]);
+// solver 名（team0:hub.exe / hub#1 → hub）: seed をまたいだ集計に使う
+const solverOf = (name) => String(name).replace(/^team\d+:/, "").replace(/\.exe$/, "").replace(/#\d+$/, "").replace(/'+$/, "");
+
+function mergeGroup(items) {
+  // 全チームそろったログ（vis.json / judge の出力）があれば、それだけを使う
+  const full = items.filter((x) => x.log.teams.length > 1 && x.log.teams.length >= (x.log.players || 0));
+  if (full.length) items = [full.sort((a, b) => b.log.teams.length - a.log.teams.length)[0]];
+  const merged = { problem: items[0].log.problem, players: 0, teams: [], traffics: null };
+  const names = new Set();
+  for (const { name, log } of items) {
+    merged.players = Math.max(merged.players, log.players || 0);
+    if (!merged.traffics && log.traffics) merged.traffics = log.traffics;
+    for (const t of log.teams) {
+      let nm = t.name || name;
+      while (names.has(nm)) nm += "'";
+      names.add(nm);
+      merged.teams.push({ ...t, name: nm });
+    }
+  }
+  merged.players = Math.max(merged.players, merged.teams.length, 1);
+  return { log: merged, name: String(items[0].log.seed ?? items[0].name) + (items.length > 1 ? ` +${items.length - 1}` : "") };
+}
+function fileName(f) {
+  const parts = (f.webkitRelativePath || f.name).replace(/\.json$/, "").split("/");
+  const base = parts[parts.length - 1];
+  return base === "vis" && parts.length > 1 ? parts[parts.length - 2] : base;  // run_local の vis.json はフォルダ名で呼ぶ
+}
+async function loadFiles(files, append) {
+  const items = [];
+  for (const f of files) {
+    if (!f.name.endsWith(".json") || f.name === "config.json" || f.name === "summary.json") continue;
+    try { items.push({ name: fileName(f), log: toLog(JSON.parse(await f.text())) }); }
+    catch (e) { if (files.length === 1) alert(`${f.name} を読めません: ${e.message}`); }
+  }
+  if (!items.length) { alert("読み込める JSON がありません"); return; }
+  loadedFiles = append && loadedFiles.length ? loadedFiles.concat(items) : items;
+  const groups = new Map();
+  for (const it of loadedFiles) {
+    const k = probKey(it.log.problem);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(it);
+  }
+  matches = [...groups.values()].map((g) => { const m = mergeGroup(g); return { ...m, R: Sim.run(m.log) }; });
+  matches.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  $("loaded").textContent = `${loadedFiles.length} ファイル / ${matches.length} 試合`;
+  $("match").innerHTML = matches.map((m, i) => `<option value="${i}">${esc(m.name)}  (${m.R.pb.width}×${m.R.pb.height}, ${m.R.D}日)</option>`).join("");
+  renderSummary();
+  selectMatch(0);
+}
+function load(text, name = "log") {   // 文字列から 1 試合（デバッグ用）
+  loadFiles([new File([text], name + ".json")], false);
+}
+function selectMatch(i) {
+  if (!matches.length) return;
+  cur = Math.max(0, Math.min(matches.length - 1, i));
+  R = matches[cur].R;
+  brandList = [...new Set(R.pb.spots.map((s) => s.brand))].sort((a, b) => a - b);
+  const byName = R.teams.findIndex((t) => t.name === selName);
+  const bySolver = R.teams.findIndex((t) => selName && solverOf(t.name) === solverOf(selName));
+  team = byName >= 0 ? byName : bySolver >= 0 ? bySolver : 0;
+  day = 0; step = 0; layout = null;
+  $("team").innerHTML = R.teams.map((t, k) => `<option value="${k}">${esc(t.name || "team" + k)}</option>`).join("") || "<option>（マップのみ）</option>";
+  $("team").value = team;
+  $("match").value = cur;
+  $("day").max = R.D - 1;
+  $("empty").style.display = "none";
+  document.querySelectorAll("#matchList tr[data-i]").forEach((tr) => tr.classList.toggle("sel", +tr.dataset.i === cur));
+  renderRanking();
+  update();
+}
+
+// 全試合の集計（solver ごと）と試合一覧
+function renderSummary() {
+  const card = $("summaryCard");
+  const withTeams = matches.filter((m) => m.R.teams.length);
+  if (withTeams.length < 2) { card.style.display = "none"; return; }
+  card.style.display = "";
+  const agg = new Map();
+  for (const m of withTeams) for (const t of m.R.teams) {
+    const n = solverOf(t.name);
+    const A = agg.get(n) || { games: 0, wins: 0, rank: 0, matchBrands: 0, dayBrands: 0, balls: 0, invalid: 0 };
+    A.games++; A.wins += t.rank === 1; A.rank += t.rank;
+    A.matchBrands += t.matchBrands; A.dayBrands += t.dayBrands; A.balls += t.balls; A.invalid += t.invalid;
+    agg.set(n, A);
+  }
+  const names = [...agg.keys()];
+  $("summary").innerHTML = `<tr><th class="l">solver</th><th>試合</th><th>1位</th><th>平均順位</th><th>日別計</th><th>玉計</th><th>無効</th></tr>` +
+    names.map((n) => { const A = agg.get(n); return `<tr><td class="l">${esc(n)}</td><td>${A.games}</td><td>${A.wins}</td>
+      <td>${(A.rank / A.games).toFixed(2)}</td><td>${A.dayBrands}</td><td>${A.balls}</td><td class="${A.invalid ? "err" : ""}">${A.invalid}</td></tr>`; }).join("");
+  // 試合一覧: 各 solver の（一番良いチームの）順位と日別種類計
+  $("matchList").innerHTML = `<tr><th class="l">試合</th><th>サイズ</th>${names.map((n) => `<th>${esc(n)}</th>`).join("")}</tr>` +
+    matches.map((m, i) => `<tr data-i="${i}"><td class="l">${esc(m.name)}</td><td>${m.R.pb.width}</td>` + names.map((n) => {
+      const ts = m.R.teams.filter((t) => solverOf(t.name) === n);
+      if (!ts.length) return "<td>-</td>";
+      const t = ts.reduce((a, b) => (a.rank < b.rank ? a : b));
+      return `<td class="${t.rank === 1 ? "win" : ""}">${t.rank}位 ${t.dayBrands}</td>`;
+    }).join("") + "</tr>").join("");
+  $("matchList").querySelectorAll("tr[data-i]").forEach((tr) => (tr.onclick = () => selectMatch(+tr.dataset.i)));
+}
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+$("file").addEventListener("change", (e) => { loadFiles([...e.target.files], false); e.target.value = ""; });
+$("dirBtn").onclick = () => $("dir").click();
+$("dir").addEventListener("change", (e) => { loadFiles([...e.target.files], false); e.target.value = ""; });
+$("match").onchange = (e) => selectMatch(+e.target.value);
+$("mPrev").onclick = () => selectMatch(cur - 1);
+$("mNext").onclick = () => selectMatch(cur + 1);
+$("addBtn").onclick = () => $("addFile").click();
+$("addFile").addEventListener("change", (e) => { loadFiles([...e.target.files], true); e.target.value = ""; });
+const drop = $("drop");
+window.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+window.addEventListener("dragleave", () => drop.classList.remove("over"));
+window.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); loadFiles([...e.dataTransfer.files], e.shiftKey); });
+
+// ---------------- 状態の取り出し ----------------
+const curDay = (ti = team) => R.teams[ti] && R.teams[ti].days[day];
+function frameOf(ti) {
+  const d = curDay(ti);
+  if (!d) return null;
+  return d.frames[Math.min(step, d.frames.length - 1)];
+}
+function startAgents(ti) {
+  // その日の開始位置（チームがない＝マップのみのときは初期位置）
+  const d = curDay(ti);
+  return d ? d.frames[0].agents : R.pb.agentStarts.map((p) => ({ kind: 0, pos: p, fuel: R.pb.fuelLimits }));
+}
+
+// ---------------- 盤面 ----------------
+function computeLayout() {
+  const cv = $("board"), W = R.geo.W, H = R.geo.H;
+  const cssW = Math.max(300, cv.parentElement.clientWidth - 24);
+  const cssH = Math.max(420, window.innerHeight - 190);
+  const r = Math.max(6, Math.min(cssW / ((W + 0.5) * Math.sqrt(3)), cssH / (1.5 * H + 0.5)));
+  const w = Math.sqrt(3) * r;
+  const bw = (W + 0.5) * w, bh = (1.5 * H + 0.5) * r;
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = bw * dpr; cv.height = bh * dpr;
+  cv.style.width = bw + "px"; cv.style.height = bh + "px";
+  layout = { r, w, dpr };
+}
+function center(p) {
+  const W = R.geo.W, x = p % W, y = Math.floor(p / W), { r, w } = layout;
+  return [w * (x + 0.5 + (y % 2 === 0 ? 0.5 : 0)), r + 1.5 * r * y];
+}
+function hexPath(ctx, cx, cy, r) {
+  ctx.beginPath();
+  for (let k = 0; k < 6; k++) {
+    const a = Math.PI / 180 * (60 * k - 90);
+    ctx.lineTo(cx + r * Math.cos(a), cy + r * Math.sin(a));
+  }
+  ctx.closePath();
+}
+function draw() {
+  if (!R) return;
+  if (!layout) computeLayout();
+  const cv = $("board"), ctx = cv.getContext("2d"), { r, dpr } = layout, geo = R.geo, pb = R.pb;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  const status = R.statuses[day];
+  const fill = { 0: css("--plain"), 2: css("--mountain"), 3: css("--pond") };
+  // セル
+  for (let p = 0; p < geo.NC; p++) {
+    const [cx, cy] = center(p), c = geo.cells[p];
+    hexPath(ctx, cx, cy, r * 0.98);
+    ctx.fillStyle = c === 1 ? [css("--road"), css("--busy"), css("--jam")][status[p]] : fill[c];
+    ctx.fill();
+    ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1; ctx.stroke();
+    if ($("ids").checked) {
+      ctx.fillStyle = "#0006"; ctx.font = `${Math.max(7, r * 0.42)}px sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(p, cx, cy + r * 0.5);
+    }
+  }
+  // スポット
+  const fr = frameOf(team);
+  const today = new Set(fr && curDay() ? curDay().events.filter((e) => e.t <= step).map((e) => e.spot) : []);
+  pb.spots.forEach((s, i) => {
+    const [cx, cy] = center(s.pos);
+    const q = r * 0.58;
+    ctx.beginPath(); ctx.roundRect(cx - q, cy - q, 2 * q, 2 * q, q * 0.3);
+    ctx.fillStyle = brandColor(brandList.indexOf(s.brand), brandList.length);
+    ctx.globalAlpha = today.has(i) ? 0.35 : 1;
+    ctx.fill(); ctx.globalAlpha = 1;
+    ctx.lineWidth = 2; ctx.strokeStyle = "#fff"; ctx.stroke();
+    ctx.fillStyle = "#fff"; ctx.font = `bold ${Math.max(8, r * 0.62)}px sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(s.brand, cx, cy + 0.5);
+    const left = fr ? fr.stock[i] : s.stocks;
+    ctx.fillStyle = "#1f2328"; ctx.font = `${Math.max(7, r * 0.45)}px sans-serif`;
+    ctx.fillText(left + "/" + s.stocks, cx + r * 0.62, cy + r * 0.72);
+  });
+  // 他チーム
+  if ($("others").checked) R.teams.forEach((t, ti) => {
+    if (ti === team) return;
+    const f = frameOf(ti); if (!f) return;
+    f.agents.forEach((a, i) => {
+      const [cx, cy] = center(a.pos), off = offset(i, R.NA, r * 0.5);
+      ctx.beginPath(); ctx.arc(cx + off[0], cy + off[1], r * 0.16, 0, Math.PI * 2);
+      ctx.fillStyle = TEAM_COLORS[ti % TEAM_COLORS.length]; ctx.globalAlpha = 0.45; ctx.fill(); ctx.globalAlpha = 1;
+    });
+  });
+  // 選択チーム: 軌跡
+  const d = curDay();
+  const col = TEAM_COLORS[team % TEAM_COLORS.length];
+  if (d && $("trail").checked) {
+    for (let i = 0; i < R.NA; i++) {
+      ctx.beginPath();
+      let prev = -1;
+      d.frames.forEach((f, k) => {
+        const p = f.agents[i].pos; if (p === prev) return; prev = p;
+        const [cx, cy] = center(p), off = offset(i, R.NA, r * 0.3);
+        k === 0 ? ctx.moveTo(cx + off[0], cy + off[1]) : ctx.lineTo(cx + off[0], cy + off[1]);
+      });
+      ctx.strokeStyle = col; ctx.globalAlpha = 0.35; ctx.lineWidth = Math.max(1.5, r * 0.12); ctx.setLineDash([r * 0.3, r * 0.2]);
+      ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+    }
+  }
+  // 選択チーム: エージェント
+  const agents = fr ? fr.agents : startAgents(team);
+  agents.forEach((a, i) => {
+    const [cx0, cy0] = center(a.pos), off = offset(i, R.NA, r * 0.3), cx = cx0 + off[0], cy = cy0 + off[1], s = r * 0.42;
+    ctx.beginPath();
+    if (a.kind === 1) { ctx.moveTo(cx, cy - s); ctx.lineTo(cx + s, cy); ctx.lineTo(cx, cy + s); ctx.lineTo(cx - s, cy); ctx.closePath(); }
+    else ctx.arc(cx, cy, s * 0.85, 0, Math.PI * 2);
+    ctx.fillStyle = col; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = "#fff"; ctx.stroke();
+    ctx.fillStyle = "#fff"; ctx.font = `bold ${Math.max(8, r * 0.5)}px sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(i, cx, cy + 0.5);
+    if (a.kind === 0) {   // 燃料バー
+      const fw = r * 0.9, ratio = Math.max(0, a.fuel / pb.fuelLimits);
+      ctx.fillStyle = "#0004"; ctx.fillRect(cx - fw / 2, cy - s - 5, fw, 3);
+      ctx.fillStyle = ratio > 0.3 ? "#16a34a" : "#dc2626"; ctx.fillRect(cx - fw / 2, cy - s - 5, fw * ratio, 3);
+    }
+  });
+}
+function offset(i, n, rad) {
+  if (n <= 1) return [0, 0];
+  const a = (Math.PI * 2 * i) / n - Math.PI / 2;
+  return [rad * Math.cos(a), rad * Math.sin(a)];
+}
+
+// ---------------- 表 ----------------
+function renderRanking() {
+  const rows = [...R.teams].map((t, i) => ({ ...t, i })).sort((a, b) => a.rank - b.rank);
+  $("ranking").innerHTML = `<tr><th>#</th><th class="l">チーム</th><th>総種類</th><th>日別計</th><th>玉</th><th title="client: 受付開始から最後の有効な提出まで / judge: solver の実行時間">時間(秒)</th><th>無効</th></tr>` +
+    (rows.map((t) => `<tr data-i="${t.i}" class="${t.i === team ? "sel" : ""}"><td>${t.rank}</td>
+      <td class="l"><i class="sw" style="background:${TEAM_COLORS[t.i % TEAM_COLORS.length]}"></i>${esc(t.name || "team" + t.i)}</td>
+      <td>${t.matchBrands}/${R.numBrands}</td><td>${t.dayBrands}</td><td>${t.balls}</td><td>${t.time ? t.time.toFixed(1) : "-"}</td>
+      <td class="${t.invalid ? "err" : ""}">${t.invalid}</td></tr>`).join("") || `<tr><td colspan="7" class="muted l">チームなし（マップのみ）</td></tr>`);
+  $("ranking").querySelectorAll("tr[data-i]").forEach((tr) => tr.onclick = () => { team = +tr.dataset.i; selName = R.teams[team].name; $("team").value = team; renderRanking(); update(); });
+  const t = R.teams[team];
+  $("checks").innerHTML = t && t.checks.length ? "サーバーとの不一致:<br>" + t.checks.map(esc).join("<br>") : (R.useServer ? '<span class="muted">道路状態はサーバー配布の値を使用</span>' : "");
+}
+function renderSide() {
+  const t = R.teams[team], fr = frameOf(team);
+  // 日別
+  $("days").innerHTML = `<tr><th>日</th><th>ステップ</th><th>種類</th><th>玉</th><th title="client: 受付開始から最後の有効な提出まで / judge: solver の実行時間">時間(秒)</th><th class="l">状態</th></tr>` +
+    R.pb.daySteps.map((s, k) => {
+      const d = t && t.days[k];
+      return `<tr class="${k === day ? "sel" : ""}"><td>${k}</td><td>${s}</td><td>${d ? d.brands.length : "-"}</td><td>${d ? d.balls : "-"}</td>
+        <td>${t && t.times && t.times[k] != null ? t.times[k].toFixed(1) : "-"}</td><td class="l ${d && d.error ? "err" : ""}">${d ? (d.error ? "無効" : "OK") : ""}</td></tr>`;
+    }).join("");
+  // エージェント
+  const ags = fr ? fr.agents : startAgents(team);
+  $("agents").innerHTML = `<tr><th>#</th><th class="l">種別</th><th>位置 (x,y)</th><th class="l">燃料</th><th>今日の玉</th></tr>` +
+    ags.map((a, i) => {
+      const x = a.pos % R.geo.W, y = Math.floor(a.pos / R.geo.W);
+      const fuel = a.kind === 0 ? `<span class="barbg"><span class="bar" style="width:${Math.max(0, 60 * a.fuel / R.pb.fuelLimits)}px"></span></span> ${a.fuel}` : "∞";
+      return `<tr><td>${i}</td><td class="l">${a.kind === 0 ? "巡回車" : "補給車"}</td><td>${a.pos} (${x},${y})</td><td class="l">${fuel}</td><td>${fr ? fr.gains[i] : "-"}</td></tr>`;
+    }).join("");
+  // 系列
+  const d = curDay();
+  const todaySet = new Set(d ? d.events.filter((e) => e.t <= step).map((e) => e.brand) : []);
+  const ever = new Set();
+  if (t) t.days.slice(0, day).forEach((dd) => dd.brands.forEach((b) => ever.add(b)));
+  $("brands").innerHTML = brandList.map((b, k) =>
+    `<span class="chip ${todaySet.has(b) ? "today" : ""} ${ever.has(b) || todaySet.has(b) ? "ever" : ""}" style="background:${brandColor(k, brandList.length)}">${b}</span>`).join("");
+  $("dayErr").textContent = d && d.error ? `day ${day}: ${d.error}（全員待機として扱っています）` : "";
+}
+function update() {
+  if (!R) return;
+  const steps = R.pb.daySteps[day];
+  $("day").value = day; $("step").max = steps; step = Math.min(step, steps); $("step").value = step;
+  $("dayLbl").textContent = `${day} / ${R.D - 1}`;
+  $("stepLbl").textContent = `${step} / ${steps}`;
+  draw(); renderSide();
+  $("days").querySelectorAll("tr").forEach((tr, k) => { if (k > 0) tr.onclick = () => { day = k - 1; step = 0; update(); }; });
+}
+
+// ---------------- 操作 ----------------
+function go(delta) {
+  if (!R) return;
+  step += delta;
+  if (step > R.pb.daySteps[day]) {
+    if (day < R.D - 1) { day++; step = 0; } else { step = R.pb.daySteps[day]; stop(); }
+  } else if (step < 0) {
+    if (day > 0) { day--; step = R.pb.daySteps[day]; } else step = 0;
+  }
+  update();
+}
+function stop() { clearInterval(timer); timer = null; $("play").textContent = "▶ 再生"; }
+$("play").onclick = () => {
+  if (timer) return stop();
+  $("play").textContent = "⏸ 停止";
+  timer = setInterval(() => {
+    if (!$("cont").checked && step >= R.pb.daySteps[day]) return stop();
+    go(1);
+  }, 1000 / (4 * +$("speed").value));
+};
+$("speed").onchange = () => { if (timer) { stop(); $("play").click(); } };
+$("next").onclick = () => go(1);
+$("prev").onclick = () => go(-1);
+$("first").onclick = () => { step = 0; update(); };
+$("last").onclick = () => { if (R) { step = R.pb.daySteps[day]; update(); } };
+$("day").oninput = (e) => { day = +e.target.value; step = 0; update(); };
+$("step").oninput = (e) => { step = +e.target.value; update(); };
+$("team").onchange = (e) => { team = +e.target.value; selName = R.teams[team] && R.teams[team].name; renderRanking(); update(); };
+["others", "trail", "ids"].forEach((id) => $(id).onchange = draw);
+window.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "INPUT" && e.target.type !== "checkbox") return;
+  if (e.key === "ArrowRight") go(1);
+  if (e.key === "ArrowLeft") go(-1);
+  if (e.key === "[") selectMatch(cur - 1);
+  if (e.key === "]") selectMatch(cur + 1);
+  if (e.key === " ") { e.preventDefault(); $("play").click(); }
+});
+window.addEventListener("resize", () => { if (R) { layout = null; draw(); } });
+
+// マウスオーバーでセル情報
+$("board").addEventListener("mousemove", (e) => {
+  if (!R || !layout) return;
+  const rect = e.target.getBoundingClientRect(), mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  let best = -1, bd = Infinity;
+  for (let p = 0; p < R.geo.NC; p++) { const [cx, cy] = center(p), d = (cx - mx) ** 2 + (cy - my) ** 2; if (d < bd) { bd = d; best = p; } }
+  const tip = $("tip");
+  if (best < 0 || bd > layout.r ** 2) { tip.style.display = "none"; return; }
+  const c = R.geo.cells[best], names = ["平地", "道路", "山地", "池"];
+  let s = `cell ${best}  (x=${best % R.geo.W}, y=${Math.floor(best / R.geo.W)})\n${names[c]}`;
+  if (c === 1) {
+    s += ` : ${["順調", "混雑", "渋滞"][R.statuses[day][best]]}`;
+    const prev = [day - 1, day - 2].filter((k) => k >= 0).reduce((x, k) => x + R.stays[k][best], 0);
+    s += `\n前日+前々日の滞在(全チーム) ${prev} / ${R.players}チーム`;
+  }
+  const si = R.geo.spotAt[best];
+  if (si >= 0) { const sp = R.pb.spots[si], fr = frameOf(team); s += `\nスポット #${si}  系列 ${sp.brand}  在庫 ${fr ? fr.stock[si] : sp.stocks}/${sp.stocks}`; }
+  const here = [];
+  R.teams.forEach((t, ti) => { const f = frameOf(ti); if (f) f.agents.forEach((a, i) => a.pos === best && here.push(`${t.name || "team" + ti} #${i}${a.kind ? "(補給)" : ""} 燃料${a.fuel}`)); });
+  if (here.length) s += "\n" + here.join("\n");
+  tip.textContent = s; tip.style.display = "block";
+  tip.style.left = e.clientX + 14 + "px"; tip.style.top = e.clientY + 14 + "px";
+});
+$("board").addEventListener("mouseleave", () => ($("tip").style.display = "none"));
+</script>
+</body>
+</html>

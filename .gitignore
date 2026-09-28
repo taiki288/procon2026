@@ -1,0 +1,15 @@
+*.o
+logs/
+__pycache__/
+build/
+maps/gen/
+
+# 公式サイトから入手できるもの（python tools/fetch_official.py で取得）
+server/
+maps/sample_*.json
+maps/example_config.json
+maps/config_format.md
+*.exe
+
+# エディタの設定（PC ごとに違う）
+.vscode/
